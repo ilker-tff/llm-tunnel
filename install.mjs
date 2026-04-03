@@ -187,7 +187,7 @@ async function main() {
   // Kill any existing proxy
   runQuiet("lsof -ti:8080 | xargs kill -9 2>/dev/null");
 
-  const proxyScript = join(INSTALL_DIR, "proxy", "server.js");
+  const proxyScript = join(INSTALL_DIR, "proxy", "server.cjs");
   const proxyEnv = {
     ...process.env,
     API_KEY: apiKey,
@@ -212,7 +212,7 @@ async function main() {
   if (health) {
     ok(`Auth proxy running on port 8080`);
   } else {
-    err("Proxy failed to start. Run manually: node ~/llm-tunnel/proxy/server.js");
+    err("Proxy failed to start. Run manually: node ~/llm-tunnel/proxy/server.cjs");
   }
 
   // ── Done ──────────────────────────────────────────────────────────────
@@ -236,7 +236,7 @@ async function main() {
   console.log(`    cloudflared tunnel --url http://localhost:8080`);
   br();
   console.log(`  ${c.bold}Stop:${c.reset}     kill $(cat ~/llm-tunnel/proxy.pid)`);
-  console.log(`  ${c.bold}Restart:${c.reset}  node ~/llm-tunnel/proxy/server.js &`);
+  console.log(`  ${c.bold}Restart:${c.reset}  node ~/llm-tunnel/proxy/server.cjs &`);
   br();
   console.log(`  ${c.yellow}Save your API key — you need it for every request.${c.reset}`);
   br();
