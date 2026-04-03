@@ -20,7 +20,7 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-// ── Rate limiter (per-key, per-minute) ────────────────────────────────────────
+// ── Rate limiter ────────────────────────────────────────────────────────────
 
 const rateBuckets = new Map();
 
@@ -36,10 +36,10 @@ function checkRateLimit(key) {
   return bucket.count <= RATE_LIMIT_RPM;
 }
 
-// ── Proxy handler ─────────────────────────────────────────────────────────────
+// ── Proxy: auth + passthrough to Ollama ─────────────────────────────────────
 
-function proxyToOllama(req, res, path, body, isChat) {
-  const url = new URL(path, OLLAMA_URL);
+function proxyToOllama(req, res, ollamaPath, body) {
+  const url = new URL(ollamaPath, OLLAMA_URL);
   const proxyReq = http.request(
     url,
     {
@@ -50,99 +50,23 @@ function proxyToOllama(req, res, path, body, isChat) {
       },
     },
     (proxyRes) => {
-      if (isChat) console.log(`[proxy] Ollama responded: ${proxyRes.statusCode}`);
-      if (!isChat) {
-        // Non-chat endpoints: pass through as-is
-        res.writeHead(proxyRes.statusCode, {
-          "Content-Type": proxyRes.headers["content-type"] || "application/json",
-        });
-        proxyRes.pipe(res);
-        return;
-      }
-
-      // Chat endpoints: convert Ollama NDJSON stream → OpenAI SSE format
-      res.writeHead(proxyRes.statusCode, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-      });
-
-      let buffer = "";
-      proxyRes.on("data", (chunk) => {
-        buffer += chunk.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || ""; // keep incomplete line in buffer
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const ollamaMsg = JSON.parse(line);
-            if (ollamaMsg.done) {
-              // Final message — include usage stats
-              const openaiDone = {
-                id: "chatcmpl-" + Date.now(),
-                object: "chat.completion.chunk",
-                created: Math.floor(Date.now() / 1000),
-                model: ollamaMsg.model || DEFAULT_MODEL,
-                choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-                usage: {
-                  prompt_tokens: ollamaMsg.prompt_eval_count || 0,
-                  completion_tokens: ollamaMsg.eval_count || 0,
-                  total_tokens: (ollamaMsg.prompt_eval_count || 0) + (ollamaMsg.eval_count || 0),
-                },
-              };
-              res.write(`data: ${JSON.stringify(openaiDone)}\n\n`);
-              res.write("data: [DONE]\n\n");
-            } else {
-              // Streaming token
-              const content = ollamaMsg.message?.content || "";
-              if (content) {
-                const openaiChunk = {
-                  id: "chatcmpl-" + Date.now(),
-                  object: "chat.completion.chunk",
-                  created: Math.floor(Date.now() / 1000),
-                  model: ollamaMsg.model || DEFAULT_MODEL,
-                  choices: [{ index: 0, delta: { content }, finish_reason: null }],
-                };
-                res.write(`data: ${JSON.stringify(openaiChunk)}\n\n`);
-              }
-            }
-          } catch {}
-        }
-      });
-
-      proxyRes.on("end", () => {
-        // Process any remaining buffer
-        if (buffer.trim()) {
-          try {
-            const ollamaMsg = JSON.parse(buffer);
-            if (ollamaMsg.done) {
-              res.write("data: [DONE]\n\n");
-            }
-          } catch {}
-        }
-        res.end();
-      });
+      // Pass through Ollama's response headers and body as-is
+      const headers = {};
+      if (proxyRes.headers["content-type"]) headers["Content-Type"] = proxyRes.headers["content-type"];
+      if (proxyRes.headers["transfer-encoding"]) headers["Transfer-Encoding"] = proxyRes.headers["transfer-encoding"];
+      res.writeHead(proxyRes.statusCode, headers);
+      proxyRes.pipe(res);
     }
   );
   proxyReq.on("error", (err) => {
-    console.error(`[proxy] ERROR ${path}: ${err.message}`);
     res.writeHead(502, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "LLM backend unavailable", detail: err.message }));
   });
-  if (body) {
-    if (isChat) {
-      const fs = require("fs");
-      const logFile = require("path").join(__dirname, "..", "request.log");
-      fs.writeFileSync(logFile, `${new Date().toISOString()} ${path}\n${body}\n`);
-      console.log(`[proxy] ${path} body logged to request.log (${body.length} bytes)`);
-    }
-    proxyReq.write(body);
-  }
+  if (body) proxyReq.write(body);
   proxyReq.end();
 }
 
-// ── HTTP server ───────────────────────────────────────────────────────────────
+// ── HTTP server ─────────────────────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
   // CORS
@@ -154,13 +78,13 @@ const server = http.createServer((req, res) => {
     return res.end();
   }
 
-  // Health check (no auth needed)
+  // Health check (no auth)
   if (req.url === "/health" || req.url === "/healthz") {
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ status: "ok", model: DEFAULT_MODEL }));
   }
 
-  // ── Auth check ────────────────────────────────────────────────────────────
+  // ── Auth ──────────────────────────────────────────────────────────────────
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
 
@@ -175,72 +99,22 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ error: "Rate limit exceeded", limit: RATE_LIMIT_RPM + "/min" }));
   }
 
-  // ── Collect body and proxy ────────────────────────────────────────────────
+  // ── Collect body and passthrough to Ollama ────────────────────────────────
   let body = "";
   req.on("data", (chunk) => (body += chunk));
   req.on("end", () => {
     // Inject default model if not specified
-    if (body && (req.url === "/v1/chat/completions" || req.url === "/chat/completions" || req.url === "/api/chat" || req.url === "/api/generate")) {
+    if (body) {
       try {
         const parsed = JSON.parse(body);
         if (!parsed.model) parsed.model = DEFAULT_MODEL;
-
-        const isOpenAIPath = req.url === "/v1/chat/completions" || req.url === "/chat/completions";
-        if (isOpenAIPath) {
-          // OpenAI clients: force streaming to avoid Cloudflare timeout
-          parsed.stream = true;
-
-          // Convert OpenAI fields to Ollama-compatible
-          delete parsed.store;
-          delete parsed.frequency_penalty;
-          delete parsed.presence_penalty;
-          delete parsed.logprobs;
-          delete parsed.top_logprobs;
-          delete parsed.n;
-          delete parsed.response_format;
-          delete parsed.seed;
-          delete parsed.service_tier;
-          delete parsed.user;
-          if (parsed.max_completion_tokens) {
-            parsed.options = parsed.options || {};
-            parsed.options.num_predict = parsed.max_completion_tokens;
-            delete parsed.max_completion_tokens;
-          }
-          if (parsed.max_tokens) {
-            parsed.options = parsed.options || {};
-            parsed.options.num_predict = parsed.max_tokens;
-            delete parsed.max_tokens;
-          }
-
-          // Convert array content format to string for text-only messages
-          if (parsed.messages) {
-            parsed.messages = parsed.messages.map((msg) => {
-              if (Array.isArray(msg.content)) {
-                const textParts = msg.content.filter((p) => p.type === "text");
-                const imageParts = msg.content.filter((p) => p.type === "image_url");
-                if (imageParts.length === 0) {
-                  msg.content = textParts.map((p) => p.text).join("\n");
-                }
-              }
-              return msg;
-            });
-          }
-        }
-        // Ollama-native paths (/api/chat, /api/generate): passthrough as-is
-
         body = JSON.stringify(parsed);
       } catch {}
     }
 
-    // Map OpenAI-compatible paths to Ollama
-    let ollamaPath = req.url;
-    let isChat = false;
-    let isOpenAI = false;
-    if (req.url === "/v1/chat/completions" || req.url === "/chat/completions") { ollamaPath = "/api/chat"; isChat = true; isOpenAI = true; }
-    if (req.url === "/api/chat" || req.url === "/api/generate") { isChat = true; isOpenAI = false; }
-    if (req.url === "/v1/models" || req.url === "/models") ollamaPath = "/api/tags";
-
-    proxyToOllama(req, res, ollamaPath, body || undefined, isOpenAI);
+    // Passthrough everything to Ollama as-is
+    // Ollama natively supports: /v1/chat/completions, /api/chat, /api/generate, /api/tags, etc.
+    proxyToOllama(req, res, req.url, body || undefined);
   });
 });
 
