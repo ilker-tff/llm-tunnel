@@ -3,11 +3,9 @@
 # Self-hosted LLM with API key auth. One command to install.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/ilker-tff/llm-tunnel/main/install.sh | bash
-#
-# Options (via environment variables):
-#   MODEL=gemma4:e4b curl -fsSL .../install.sh | bash
-#   MODEL=gemma4:31b TUNNEL_TOKEN=xxx curl -fsSL .../install.sh | bash
+#   curl -fsSL .../install.sh | bash -s -- gemma4:31b
+#   curl -fsSL .../install.sh | bash -s -- gemma4:e4b
+#   curl -fsSL .../install.sh | bash              # defaults to gemma4:e4b
 #
 # Available models:
 #   gemma4:31b  (20GB)  - Best quality, video + image
@@ -23,7 +21,7 @@ set -euo pipefail
 
 REPO="https://github.com/ilker-tff/llm-tunnel.git"
 INSTALL_DIR="$HOME/llm-tunnel"
-MODEL="${MODEL:-gemma4:e4b}"
+MODEL="${1:-gemma4:e4b}"
 TUNNEL_TOKEN="${TUNNEL_TOKEN:-unused}"
 API_KEY="${API_KEY:-$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64)}"
 
