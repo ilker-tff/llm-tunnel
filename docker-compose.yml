@@ -50,7 +50,7 @@ services:
     restart: unless-stopped
     command: tunnel run
     environment:
-      - TUNNEL_TOKEN=${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env}
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:-}
     depends_on:
       - proxy
     profiles:
