@@ -5,14 +5,27 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/ilker-tff/llm-tunnel/main/install.sh | bash
 #
-# Or clone first:
-#   git clone https://github.com/ilker-tff/llm-tunnel.git && cd llm-tunnel && bash install.sh
+# Options (via environment variables):
+#   MODEL=gemma4:e4b curl -fsSL .../install.sh | bash
+#   MODEL=gemma4:31b TUNNEL_TOKEN=xxx curl -fsSL .../install.sh | bash
+#
+# Available models:
+#   gemma4:31b  (20GB)  - Best quality, video + image
+#   gemma4:26b  (18GB)  - Fast MoE, video + image
+#   gemma4:e4b  (9.6GB) - Edge, audio + image + video  [default]
+#   gemma4:e2b  (7.2GB) - Smallest, audio + image + video
+#   qwen3.5:32b (20GB)  - Strong reasoning + tools
+#   mistral     (4.1GB) - Fast and lightweight
+#   Or any model from ollama.com/library
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
 REPO="https://github.com/ilker-tff/llm-tunnel.git"
 INSTALL_DIR="$HOME/llm-tunnel"
+MODEL="${MODEL:-gemma4:e4b}"
+TUNNEL_TOKEN="${TUNNEL_TOKEN:-unused}"
+API_KEY="${API_KEY:-$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64)}"
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 
@@ -29,20 +42,6 @@ ok()    { echo -e "${GREEN}[ok]${NC}    $1"; }
 warn()  { echo -e "${YELLOW}[warn]${NC}  $1"; }
 err()   { echo -e "${RED}[error]${NC} $1"; }
 
-# Read from terminal even when piped via curl | bash
-prompt() {
-  local var_name="$1"
-  local prompt_text="$2"
-  local default_val="${3:-}"
-  local input=""
-  echo -n "$prompt_text" >&2
-  input=$(head -1 < /dev/tty) || input=""
-  if [ -z "$input" ] && [ -n "$default_val" ]; then
-    input="$default_val"
-  fi
-  eval "$var_name='$input'"
-}
-
 # ── Banner ───────────────────────────────────────────────────────────────────
 
 echo ""
@@ -52,39 +51,30 @@ echo "  ║           llm-tunnel                  ║"
 echo "  ║   Self-hosted LLM in one command      ║"
 echo "  ╚═══════════════════════════════════════╝"
 echo -e "${NC}"
-echo ""
 
 # ── Check Docker ─────────────────────────────────────────────────────────────
 
 if ! command -v docker &> /dev/null; then
   err "Docker is not installed."
   echo ""
-  echo "  Install Docker first:"
-  echo ""
   if [[ "$OSTYPE" == "darwin"* ]]; then
-    echo "    brew install --cask docker"
-    echo "    # or download from https://docker.com/products/docker-desktop"
+    echo "  Install: brew install --cask docker"
   elif [[ "$OSTYPE" == "linux"* ]]; then
-    echo "    curl -fsSL https://get.docker.com | sh"
+    echo "  Install: curl -fsSL https://get.docker.com | sh"
   else
-    echo "    https://docker.com/products/docker-desktop"
+    echo "  Install: https://docker.com/products/docker-desktop"
   fi
   echo ""
   exit 1
 fi
 ok "Docker found"
 
-# Check Docker is running
 if ! docker info &> /dev/null 2>&1; then
-  err "Docker is installed but not running."
-  echo ""
-  echo "  Start Docker Desktop and try again."
-  echo ""
+  err "Docker is not running. Start Docker Desktop and try again."
   exit 1
 fi
 ok "Docker is running"
 
-# Check docker compose
 if docker compose version &> /dev/null 2>&1; then
   COMPOSE="docker compose"
 elif command -v docker-compose &> /dev/null; then
@@ -98,90 +88,34 @@ ok "Docker Compose found"
 # ── Clone or update repo ─────────────────────────────────────────────────────
 
 if [ -d "$INSTALL_DIR" ]; then
-  info "Updating existing installation at $INSTALL_DIR"
+  info "Updating existing installation..."
   git -C "$INSTALL_DIR" pull --quiet 2>/dev/null || true
 else
-  info "Cloning llm-tunnel to $INSTALL_DIR"
+  info "Cloning llm-tunnel..."
   git clone --quiet "$REPO" "$INSTALL_DIR"
 fi
 cd "$INSTALL_DIR"
 ok "Repository ready"
 
-# ── Model selection ──────────────────────────────────────────────────────────
+# ── Config ───────────────────────────────────────────────────────────────────
 
-echo ""
-echo -e "${BOLD}Select a model:${NC}"
-echo ""
-echo "  1) gemma4:31b    20GB  - Best quality, video + image          (needs 48GB+ RAM)"
-echo "  2) gemma4:26b    18GB  - Fast MoE, video + image              (needs 32GB+ RAM)"
-echo "  3) gemma4:e4b    9.6GB - Edge model, audio + image + video    (needs 16GB+ RAM)"
-echo "  4) gemma4:e2b    7.2GB - Smallest Gemma, audio + image + video (needs 12GB+ RAM)"
-echo "  5) qwen3.5:32b   20GB  - Strong reasoning + tools             (needs 48GB+ RAM)"
-echo "  6) mistral       4.1GB - Fast and lightweight                  (needs 8GB+ RAM)"
-echo "  7) Custom        Enter any model from ollama.com/library"
-echo ""
-
-prompt MODEL_CHOICE "Choose [1-7, default=3]: " "3"
-
-case $MODEL_CHOICE in
-  1) MODEL="gemma4:31b" ;;
-  2) MODEL="gemma4:26b" ;;
-  3) MODEL="gemma4:e4b" ;;
-  4) MODEL="gemma4:e2b" ;;
-  5) MODEL="qwen3.5:32b" ;;
-  6) MODEL="mistral" ;;
-  7)
-    prompt MODEL "Enter model name (e.g. llama4-scout): " ""
-    if [ -z "$MODEL" ]; then
-      err "No model specified"
-      exit 1
-    fi
-    ;;
-  *) MODEL="gemma4:e4b" ;;
-esac
 ok "Model: $MODEL"
-
-# ── Generate API key ─────────────────────────────────────────────────────────
-
-API_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64)
 ok "API key generated"
 
-# ── Cloudflare Tunnel (optional) ─────────────────────────────────────────────
-
-echo ""
-prompt TUNNEL_CHOICE "Expose to internet via Cloudflare Tunnel? [y/N]: " "n"
-TUNNEL_TOKEN=""
-USE_TUNNEL=false
-
-if [[ "$TUNNEL_CHOICE" =~ ^[Yy]$ ]]; then
-  echo ""
-  echo "  To get a tunnel token:"
-  echo "  1. Go to https://one.dash.cloudflare.com"
-  echo "  2. Networks -> Tunnels -> Create a tunnel"
-  echo "  3. Set public hostname -> Service: http://proxy:8080"
-  echo "  4. Copy the tunnel token"
-  echo ""
-  prompt TUNNEL_TOKEN "Paste tunnel token (or press Enter to skip): " ""
-  if [ -n "$TUNNEL_TOKEN" ]; then
-    USE_TUNNEL=true
-    ok "Tunnel configured"
-  else
-    warn "Skipped — you can add TUNNEL_TOKEN to .env later"
-  fi
-fi
-
-# ── Memory limit ─────────────────────────────────────────────────────────────
-
+# Detect RAM
 TOTAL_RAM=$(sysctl -n hw.memsize 2>/dev/null || free -b 2>/dev/null | awk '/Mem:/{print $2}' || echo 0)
 TOTAL_RAM_GB=$((TOTAL_RAM / 1073741824))
-
 if [ "$TOTAL_RAM_GB" -gt 0 ]; then
-  # Use 50% of total RAM for Ollama (leaves plenty for the host)
   MEM_LIMIT="$((TOTAL_RAM_GB / 2))g"
   info "Detected ${TOTAL_RAM_GB}GB RAM, allocating ${MEM_LIMIT} to Ollama"
 else
   MEM_LIMIT="16g"
-  info "Could not detect RAM, defaulting to ${MEM_LIMIT}"
+fi
+
+USE_TUNNEL=false
+if [ "$TUNNEL_TOKEN" != "unused" ]; then
+  USE_TUNNEL=true
+  ok "Cloudflare Tunnel configured"
 fi
 
 # ── Write .env ───────────────────────────────────────────────────────────────
@@ -189,7 +123,7 @@ fi
 cat > .env << ENVEOF
 API_KEY=${API_KEY}
 MODEL=${MODEL}
-TUNNEL_TOKEN=${TUNNEL_TOKEN:-unused}
+TUNNEL_TOKEN=${TUNNEL_TOKEN}
 RATE_LIMIT_RPM=60
 OLLAMA_MEMORY_LIMIT=${MEM_LIMIT}
 ENVEOF
@@ -197,7 +131,6 @@ ok ".env written"
 
 # ── Start services ───────────────────────────────────────────────────────────
 
-echo ""
 info "Starting llm-tunnel..."
 echo ""
 
@@ -207,7 +140,7 @@ else
   $COMPOSE up -d 2>&1
 fi
 
-# ── Wait for Ollama to be ready ──────────────────────────────────────────────
+# ── Wait for Ollama ──────────────────────────────────────────────────────────
 
 echo ""
 info "Waiting for Ollama to start..."
@@ -225,9 +158,7 @@ echo ""
 
 info "Downloading model: ${MODEL} (this may take a few minutes...)"
 echo ""
-docker exec llm-tunnel-ollama ollama pull "$MODEL" 2>&1 | while IFS= read -r line; do
-  echo -e "  $line"
-done
+docker exec llm-tunnel-ollama ollama pull "$MODEL" 2>&1
 
 if [ $? -eq 0 ]; then
   ok "Model ${MODEL} ready"
