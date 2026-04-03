@@ -1,13 +1,22 @@
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
 
-const API_KEY = process.env.API_KEY;
-const OLLAMA_URL = process.env.OLLAMA_URL || "http://ollama:11434";
-const PORT = parseInt(process.env.PORT || "8080");
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || "gemma4:31b";
-const RATE_LIMIT_RPM = parseInt(process.env.RATE_LIMIT_RPM || "60");
+// Load config from config.json (written by installer) or fall back to env vars
+let config = {};
+try {
+  const configPath = path.join(__dirname, "..", "config.json");
+  config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+} catch {}
+
+const API_KEY = process.env.API_KEY || config.apiKey;
+const OLLAMA_URL = process.env.OLLAMA_URL || config.ollamaUrl || "http://localhost:11434";
+const PORT = parseInt(process.env.PORT || config.port || "8080");
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || config.model || "gemma4:e4b";
+const RATE_LIMIT_RPM = parseInt(process.env.RATE_LIMIT_RPM || config.rateLimitRpm || "60");
 
 if (!API_KEY) {
-  console.error("API_KEY environment variable is required");
+  console.error("No API key found. Run the installer: npx github:ilker-tff/llm-tunnel");
   process.exit(1);
 }
 
