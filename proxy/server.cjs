@@ -38,7 +38,7 @@ function checkRateLimit(key) {
 
 // ── Proxy handler ─────────────────────────────────────────────────────────────
 
-function proxyToOllama(req, res, path, body) {
+function proxyToOllama(req, res, path, body, isChat) {
   const url = new URL(path, OLLAMA_URL);
   const proxyReq = http.request(
     url,
@@ -50,11 +50,78 @@ function proxyToOllama(req, res, path, body) {
       },
     },
     (proxyRes) => {
+      if (!isChat) {
+        // Non-chat endpoints: pass through as-is
+        res.writeHead(proxyRes.statusCode, {
+          "Content-Type": proxyRes.headers["content-type"] || "application/json",
+        });
+        proxyRes.pipe(res);
+        return;
+      }
+
+      // Chat endpoints: convert Ollama NDJSON stream → OpenAI SSE format
       res.writeHead(proxyRes.statusCode, {
-        "Content-Type": proxyRes.headers["content-type"] || "application/json",
-        "Transfer-Encoding": proxyRes.headers["transfer-encoding"] || "",
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
       });
-      proxyRes.pipe(res);
+
+      let buffer = "";
+      proxyRes.on("data", (chunk) => {
+        buffer += chunk.toString();
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || ""; // keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const ollamaMsg = JSON.parse(line);
+            if (ollamaMsg.done) {
+              // Final message — include usage stats
+              const openaiDone = {
+                id: "chatcmpl-" + Date.now(),
+                object: "chat.completion.chunk",
+                created: Math.floor(Date.now() / 1000),
+                model: ollamaMsg.model || DEFAULT_MODEL,
+                choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                usage: {
+                  prompt_tokens: ollamaMsg.prompt_eval_count || 0,
+                  completion_tokens: ollamaMsg.eval_count || 0,
+                  total_tokens: (ollamaMsg.prompt_eval_count || 0) + (ollamaMsg.eval_count || 0),
+                },
+              };
+              res.write(`data: ${JSON.stringify(openaiDone)}\n\n`);
+              res.write("data: [DONE]\n\n");
+            } else {
+              // Streaming token
+              const content = ollamaMsg.message?.content || "";
+              if (content) {
+                const openaiChunk = {
+                  id: "chatcmpl-" + Date.now(),
+                  object: "chat.completion.chunk",
+                  created: Math.floor(Date.now() / 1000),
+                  model: ollamaMsg.model || DEFAULT_MODEL,
+                  choices: [{ index: 0, delta: { content }, finish_reason: null }],
+                };
+                res.write(`data: ${JSON.stringify(openaiChunk)}\n\n`);
+              }
+            }
+          } catch {}
+        }
+      });
+
+      proxyRes.on("end", () => {
+        // Process any remaining buffer
+        if (buffer.trim()) {
+          try {
+            const ollamaMsg = JSON.parse(buffer);
+            if (ollamaMsg.done) {
+              res.write("data: [DONE]\n\n");
+            }
+          } catch {}
+        }
+        res.end();
+      });
     }
   );
   proxyReq.on("error", (err) => {
@@ -114,10 +181,12 @@ const server = http.createServer((req, res) => {
 
     // Map OpenAI-compatible paths to Ollama
     let ollamaPath = req.url;
-    if (req.url === "/v1/chat/completions" || req.url === "/chat/completions") ollamaPath = "/api/chat";
+    let isChat = false;
+    if (req.url === "/v1/chat/completions" || req.url === "/chat/completions") { ollamaPath = "/api/chat"; isChat = true; }
+    if (req.url === "/api/chat" || req.url === "/api/generate") { isChat = true; }
     if (req.url === "/v1/models" || req.url === "/models") ollamaPath = "/api/tags";
 
-    proxyToOllama(req, res, ollamaPath, body || undefined);
+    proxyToOllama(req, res, ollamaPath, body || undefined, isChat);
   });
 });
 
