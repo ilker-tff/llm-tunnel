@@ -18,7 +18,20 @@ Auth Proxy (validates key, rate limits)
 Ollama (your hardware, your models)
 ```
 
-## Quick Start
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ilker-tff/llm-tunnel/main/install.sh | bash
+```
+
+That's it. The installer will:
+- Check Docker is installed and running
+- Let you pick a model (Gemma 4, Qwen, Llama, Mistral, etc.)
+- Generate a secure API key
+- Optionally set up Cloudflare Tunnel for remote access
+- Download the model and start everything
+
+## Manual Setup
 
 ### 1. Clone and configure
 
