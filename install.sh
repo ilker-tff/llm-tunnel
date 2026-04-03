@@ -34,14 +34,13 @@ prompt() {
   local var_name="$1"
   local prompt_text="$2"
   local default_val="${3:-}"
-  if [ -t 0 ]; then
-    read -p "$prompt_text" "$var_name"
-  else
-    read -p "$prompt_text" "$var_name" < /dev/tty
+  local input=""
+  echo -n "$prompt_text" >&2
+  input=$(head -1 < /dev/tty) || input=""
+  if [ -z "$input" ] && [ -n "$default_val" ]; then
+    input="$default_val"
   fi
-  if [ -z "${!var_name}" ] && [ -n "$default_val" ]; then
-    eval "$var_name='$default_val'"
-  fi
+  eval "$var_name='$input'"
 }
 
 # ── Banner ───────────────────────────────────────────────────────────────────
