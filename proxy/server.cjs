@@ -50,6 +50,7 @@ function proxyToOllama(req, res, path, body, isChat) {
       },
     },
     (proxyRes) => {
+      if (isChat) console.log(`[proxy] Ollama responded: ${proxyRes.statusCode}`);
       if (!isChat) {
         // Non-chat endpoints: pass through as-is
         res.writeHead(proxyRes.statusCode, {
@@ -130,7 +131,12 @@ function proxyToOllama(req, res, path, body, isChat) {
     res.end(JSON.stringify({ error: "LLM backend unavailable", detail: err.message }));
   });
   if (body) {
-    if (isChat) console.log(`[proxy] ${path} body=${body.substring(0, 300)}`);
+    if (isChat) {
+      const fs = require("fs");
+      const logFile = require("path").join(__dirname, "..", "request.log");
+      fs.writeFileSync(logFile, `${new Date().toISOString()} ${path}\n${body}\n`);
+      console.log(`[proxy] ${path} body logged to request.log (${body.length} bytes)`);
+    }
     proxyReq.write(body);
   }
   proxyReq.end();
