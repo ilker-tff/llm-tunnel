@@ -125,10 +125,14 @@ function proxyToOllama(req, res, path, body, isChat) {
     }
   );
   proxyReq.on("error", (err) => {
+    console.error(`[proxy] ERROR ${path}: ${err.message}`);
     res.writeHead(502, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "LLM backend unavailable", detail: err.message }));
   });
-  if (body) proxyReq.write(body);
+  if (body) {
+    if (isChat) console.log(`[proxy] ${path} body=${body.substring(0, 300)}`);
+    proxyReq.write(body);
+  }
   proxyReq.end();
 }
 
