@@ -29,6 +29,21 @@ ok()    { echo -e "${GREEN}[ok]${NC}    $1"; }
 warn()  { echo -e "${YELLOW}[warn]${NC}  $1"; }
 err()   { echo -e "${RED}[error]${NC} $1"; }
 
+# Read from terminal even when piped via curl | bash
+prompt() {
+  local var_name="$1"
+  local prompt_text="$2"
+  local default_val="${3:-}"
+  if [ -t 0 ]; then
+    read -p "$prompt_text" "$var_name"
+  else
+    read -p "$prompt_text" "$var_name" < /dev/tty
+  fi
+  if [ -z "${!var_name}" ] && [ -n "$default_val" ]; then
+    eval "$var_name='$default_val'"
+  fi
+}
+
 # ── Banner ───────────────────────────────────────────────────────────────────
 
 echo ""
@@ -107,8 +122,7 @@ echo "  6) mistral       4.1GB - Fast and lightweight                  (needs 8G
 echo "  7) Custom        Enter any model from ollama.com/library"
 echo ""
 
-read -p "Choose [1-7, default=3]: " MODEL_CHOICE
-MODEL_CHOICE=${MODEL_CHOICE:-3}
+prompt MODEL_CHOICE "Choose [1-7, default=3]: " "3"
 
 case $MODEL_CHOICE in
   1) MODEL="gemma4:31b" ;;
@@ -118,7 +132,7 @@ case $MODEL_CHOICE in
   5) MODEL="qwen3.5:32b" ;;
   6) MODEL="mistral" ;;
   7)
-    read -p "Enter model name (e.g. llama4-scout): " MODEL
+    prompt MODEL "Enter model name (e.g. llama4-scout): " ""
     if [ -z "$MODEL" ]; then
       err "No model specified"
       exit 1
@@ -136,8 +150,7 @@ ok "API key generated"
 # ── Cloudflare Tunnel (optional) ─────────────────────────────────────────────
 
 echo ""
-read -p "Expose to internet via Cloudflare Tunnel? [y/N]: " TUNNEL_CHOICE
-TUNNEL_CHOICE=${TUNNEL_CHOICE:-n}
+prompt TUNNEL_CHOICE "Expose to internet via Cloudflare Tunnel? [y/N]: " "n"
 TUNNEL_TOKEN=""
 USE_TUNNEL=false
 
@@ -149,7 +162,7 @@ if [[ "$TUNNEL_CHOICE" =~ ^[Yy]$ ]]; then
   echo "  3. Set public hostname -> Service: http://proxy:8080"
   echo "  4. Copy the tunnel token"
   echo ""
-  read -p "Paste tunnel token (or press Enter to skip): " TUNNEL_TOKEN
+  prompt TUNNEL_TOKEN "Paste tunnel token (or press Enter to skip): " ""
   if [ -n "$TUNNEL_TOKEN" ]; then
     USE_TUNNEL=true
     ok "Tunnel configured"
@@ -195,23 +208,33 @@ else
   $COMPOSE up -d 2>&1
 fi
 
-# ── Wait for model download ─────────────────────────────────────────────────
+# ── Wait for Ollama to be ready ──────────────────────────────────────────────
 
 echo ""
+info "Waiting for Ollama to start..."
+for i in $(seq 1 30); do
+  if docker exec llm-tunnel-ollama ollama list &> /dev/null 2>&1; then
+    ok "Ollama is ready"
+    break
+  fi
+  echo -n "."
+  sleep 2
+done
+echo ""
+
+# ── Download model ───────────────────────────────────────────────────────────
+
 info "Downloading model: ${MODEL} (this may take a few minutes...)"
 echo ""
-
-# Follow the model-loader logs until it finishes
-$COMPOSE logs -f model-loader 2>&1 | while IFS= read -r line; do
-  echo "  $line"
-  if echo "$line" | grep -q "Model ready\|success\|exited with code 0"; then
-    break
-  fi
-  if echo "$line" | grep -q "error\|Error\|failed"; then
-    err "Model download failed. Check: $COMPOSE logs model-loader"
-    break
-  fi
+docker exec llm-tunnel-ollama ollama pull "$MODEL" 2>&1 | while IFS= read -r line; do
+  echo -e "  $line"
 done
+
+if [ $? -eq 0 ]; then
+  ok "Model ${MODEL} ready"
+else
+  err "Model download failed. Try: docker exec llm-tunnel-ollama ollama pull ${MODEL}"
+fi
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 
