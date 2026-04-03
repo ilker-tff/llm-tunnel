@@ -1,0 +1,60 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: llm-tunnel-ollama
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        limits:
+          memory: ${OLLAMA_MEMORY_LIMIT:-32g}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  model-loader:
+    image: ollama/ollama:latest
+    container_name: llm-tunnel-loader
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["sh", "-c", "ollama pull ${MODEL:-gemma4:31b} && echo 'Model ready: ${MODEL:-gemma4:31b}'"]
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+
+  proxy:
+    build: ./proxy
+    container_name: llm-tunnel-proxy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - API_KEY=${API_KEY:?Set API_KEY in .env}
+      - OLLAMA_URL=http://ollama:11434
+      - PORT=8080
+      - DEFAULT_MODEL=${MODEL:-gemma4:31b}
+      - RATE_LIMIT_RPM=${RATE_LIMIT_RPM:-60}
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: llm-tunnel-cloudflared
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env}
+    depends_on:
+      - proxy
+    profiles:
+      - tunnel
+
+volumes:
+  ollama_data:
