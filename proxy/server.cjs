@@ -185,6 +185,44 @@ const server = http.createServer((req, res) => {
         const parsed = JSON.parse(body);
         if (!parsed.model) parsed.model = DEFAULT_MODEL;
         parsed.stream = true; // Always stream to avoid Cloudflare timeout
+
+        // Convert OpenAI fields to Ollama-compatible
+        delete parsed.store;
+        delete parsed.frequency_penalty;
+        delete parsed.presence_penalty;
+        delete parsed.logprobs;
+        delete parsed.top_logprobs;
+        delete parsed.n;
+        delete parsed.response_format;
+        delete parsed.seed;
+        delete parsed.service_tier;
+        delete parsed.user;
+        if (parsed.max_completion_tokens) {
+          parsed.options = parsed.options || {};
+          parsed.options.num_predict = parsed.max_completion_tokens;
+          delete parsed.max_completion_tokens;
+        }
+        if (parsed.max_tokens) {
+          parsed.options = parsed.options || {};
+          parsed.options.num_predict = parsed.max_tokens;
+          delete parsed.max_tokens;
+        }
+
+        // Convert array content format to string for text-only messages
+        if (parsed.messages) {
+          parsed.messages = parsed.messages.map((msg) => {
+            if (Array.isArray(msg.content)) {
+              const textParts = msg.content.filter((p) => p.type === "text");
+              const imageParts = msg.content.filter((p) => p.type === "image_url");
+              if (imageParts.length === 0) {
+                // Text-only: flatten to string
+                msg.content = textParts.map((p) => p.text).join("\n");
+              }
+            }
+            return msg;
+          });
+        }
+
         body = JSON.stringify(parsed);
       } catch {}
     }
