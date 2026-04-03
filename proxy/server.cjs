@@ -120,6 +120,14 @@ const server = http.createServer((req, res) => {
   });
 });
 
+server.on("error", (e) => {
+  if (e.code === "EADDRINUSE") {
+    console.log(`llm-tunnel proxy already running on port ${PORT}`);
+    process.exit(0);
+  }
+  throw e;
+});
+
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`llm-tunnel proxy listening on :${PORT}`);
   console.log(`  Auth: API key required`);
