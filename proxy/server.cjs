@@ -111,6 +111,10 @@ const server = http.createServer((req, res) => {
       } catch {}
     }
 
+    // Log request
+    const bodyPreview = body ? body.substring(0, 200) : '(empty)';
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} ${bodyPreview}`);
+
     // Map OpenAI-compatible paths to Ollama
     let ollamaPath = req.url;
     if (req.url === "/v1/chat/completions" || req.url === "/chat/completions") ollamaPath = "/api/chat";
