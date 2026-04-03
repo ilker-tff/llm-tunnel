@@ -107,6 +107,7 @@ const server = http.createServer((req, res) => {
       try {
         const parsed = JSON.parse(body);
         if (!parsed.model) parsed.model = DEFAULT_MODEL;
+        parsed.stream = true; // Always stream to avoid Cloudflare timeout
         body = JSON.stringify(parsed);
       } catch {}
     }
