@@ -103,7 +103,7 @@ const server = http.createServer((req, res) => {
   req.on("data", (chunk) => (body += chunk));
   req.on("end", () => {
     // Inject default model if not specified
-    if (body && (req.url === "/v1/chat/completions" || req.url === "/api/chat" || req.url === "/api/generate")) {
+    if (body && (req.url === "/v1/chat/completions" || req.url === "/chat/completions" || req.url === "/api/chat" || req.url === "/api/generate")) {
       try {
         const parsed = JSON.parse(body);
         if (!parsed.model) parsed.model = DEFAULT_MODEL;
@@ -113,8 +113,8 @@ const server = http.createServer((req, res) => {
 
     // Map OpenAI-compatible paths to Ollama
     let ollamaPath = req.url;
-    if (req.url === "/v1/chat/completions") ollamaPath = "/api/chat";
-    if (req.url === "/v1/models") ollamaPath = "/api/tags";
+    if (req.url === "/v1/chat/completions" || req.url === "/chat/completions") ollamaPath = "/api/chat";
+    if (req.url === "/v1/models" || req.url === "/models") ollamaPath = "/api/tags";
 
     proxyToOllama(req, res, ollamaPath, body || undefined);
   });
