@@ -2,11 +2,12 @@
 // ─── llm-tunnel interactive installer ──────────────────────────────────────
 // Usage:
 //   npx github:ilker-tff/llm-tunnel
+//
+// No Docker required. Installs Ollama natively + a lightweight auth proxy.
 // ────────────────────────────────────────────────────────────────────────────
 
-import { createInterface } from "readline";
-import { execSync, spawn } from "child_process";
-import { existsSync, writeFileSync } from "fs";
+import { execSync, spawn, fork } from "child_process";
+import { existsSync, writeFileSync, mkdirSync, copyFileSync } from "fs";
 import { homedir, platform } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
@@ -18,15 +19,9 @@ const IS_MAC = platform() === "darwin";
 // ── Colors ──────────────────────────────────────────────────────────────────
 
 const c = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  dim: "\x1b[2m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  blue: "\x1b[34m",
-  cyan: "\x1b[36m",
-  red: "\x1b[31m",
-  white: "\x1b[37m",
+  reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
+  green: "\x1b[32m", yellow: "\x1b[33m", blue: "\x1b[34m",
+  cyan: "\x1b[36m", red: "\x1b[31m", white: "\x1b[37m",
 };
 
 const ok = (msg) => console.log(`  ${c.green}✔${c.reset} ${msg}`);
@@ -59,58 +54,37 @@ function createMenu(title, items, formatItem) {
       console.log(`\n  ${c.bold}${title}${c.reset}`);
       items.forEach((item, i) => {
         const prefix = i === selected ? `${c.cyan}❯${c.reset}` : " ";
-        const text = formatItem(item, i === selected);
-        console.log(`  ${prefix} ${text}`);
+        console.log(`  ${prefix} ${formatItem(item, i === selected)}`);
       });
     }
 
     console.log(`\n  ${c.bold}${title}${c.reset}`);
     items.forEach((item, i) => {
       const prefix = i === selected ? `${c.cyan}❯${c.reset}` : " ";
-      const text = formatItem(item, i === selected);
-      console.log(`  ${prefix} ${text}`);
+      console.log(`  ${prefix} ${formatItem(item, i === selected)}`);
     });
 
     function onKey(key) {
-      if (key[0] === 27 && key[1] === 91 && key[2] === 65) {
-        selected = Math.max(0, selected - 1);
-        render();
-      } else if (key[0] === 27 && key[1] === 91 && key[2] === 66) {
-        selected = Math.min(items.length - 1, selected + 1);
-        render();
-      } else if (key[0] === 13) {
-        stdin.removeListener("data", onKey);
-        stdin.setRawMode(false);
-        stdin.pause();
-        resolve(items[selected]);
-      } else if (key[0] === 3) {
-        stdin.setRawMode(false);
-        process.exit(0);
-      }
+      if (key[0] === 27 && key[1] === 91 && key[2] === 65) { selected = Math.max(0, selected - 1); render(); }
+      else if (key[0] === 27 && key[1] === 91 && key[2] === 66) { selected = Math.min(items.length - 1, selected + 1); render(); }
+      else if (key[0] === 13) { stdin.removeListener("data", onKey); stdin.setRawMode(false); stdin.pause(); resolve(items[selected]); }
+      else if (key[0] === 3) { stdin.setRawMode(false); process.exit(0); }
     }
-
     stdin.on("data", onKey);
   });
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function run(cmd, args = [], opts = {}) {
+function runLive(cmd, args = [], opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: "inherit", shell: true, ...opts });
-    child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`Command failed with code ${code}`));
-    });
+    child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`Exit code ${code}`)));
   });
 }
 
 function runQuiet(cmd) {
-  try {
-    return execSync(cmd, { encoding: "utf8", stdio: "pipe" }).trim();
-  } catch {
-    return null;
-  }
+  try { return execSync(cmd, { encoding: "utf8", stdio: "pipe" }).trim(); } catch { return null; }
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -124,52 +98,37 @@ async function main() {
   console.log(`  ${c.cyan}${c.bold}╚═══════════════════════════════════════╝${c.reset}`);
   br();
 
-  // ── Check Docker ──────────────────────────────────────────────────────
-  if (!runQuiet("docker --version")) {
-    err("Docker is not installed.");
-    console.log(`\n  Install: ${c.cyan}https://docker.com/products/docker-desktop${c.reset}\n`);
-    process.exit(1);
-  }
-  ok("Docker found");
-
-  if (!runQuiet("docker info")) {
-    err("Docker is not running. Start Docker Desktop and try again.");
-    process.exit(1);
-  }
-  ok("Docker is running");
-
   // ── Check/Install Ollama ──────────────────────────────────────────────
   const ollamaInstalled = runQuiet("ollama --version");
   if (!ollamaInstalled) {
-    info("Ollama not found — installing...");
+    info("Installing Ollama...");
     br();
     if (IS_MAC) {
-      await run("brew", ["install", "ollama"]);
+      await runLive("brew", ["install", "ollama"]);
     } else {
-      await run("curl -fsSL https://ollama.com/install.sh | sh");
+      await runLive("sh", ["-c", "curl -fsSL https://ollama.com/install.sh | sh"]);
     }
+    br();
     ok("Ollama installed");
   } else {
     ok("Ollama found");
   }
 
-  // ── Start Ollama service ──────────────────────────────────────────────
-  const ollamaRunning = runQuiet("curl -s http://localhost:11434/");
+  // ── Start Ollama ──────────────────────────────────────────────────────
+  const ollamaRunning = runQuiet("curl -sf http://localhost:11434/");
   if (!ollamaRunning) {
     info("Starting Ollama...");
     if (IS_MAC) {
       runQuiet("brew services start ollama");
     } else {
-      // Linux: start as background process
       spawn("ollama", ["serve"], { stdio: "ignore", detached: true }).unref();
     }
-    // Wait for it to be ready
     for (let i = 0; i < 20; i++) {
       await new Promise((r) => setTimeout(r, 1000));
-      if (runQuiet("curl -s http://localhost:11434/")) break;
+      if (runQuiet("curl -sf http://localhost:11434/")) break;
     }
   }
-  ok("Ollama is running (native, with GPU acceleration)");
+  ok("Ollama running (native GPU acceleration)");
 
   // ── Detect RAM ────────────────────────────────────────────────────────
   let totalRamGB = 0;
@@ -182,7 +141,7 @@ async function main() {
     "Select a model (↑↓ arrows, Enter to confirm):",
     MODELS,
     (m, active) => {
-      const name = active ? `${c.bold}${c.cyan}${m.id}${c.reset}` : `${m.id}`;
+      const name = active ? `${c.bold}${c.cyan}${m.id}${c.reset}` : m.id;
       const size = `${c.dim}${m.size}${c.reset}`;
       const desc = active ? `${c.white}${m.desc}${c.reset}` : `${c.dim}${m.desc}${c.reset}`;
       const ram = `${c.dim}(${m.ram} RAM)${c.reset}`;
@@ -193,53 +152,67 @@ async function main() {
   ok(`Model: ${c.bold}${model.id}${c.reset} (${model.size})`);
 
   // ── Pull model ────────────────────────────────────────────────────────
-  info(`Downloading ${c.bold}${model.id}${c.reset} — this may take a few minutes...`);
+  info(`Downloading ${c.bold}${model.id}${c.reset}...`);
   br();
-  await run("ollama", ["pull", model.id]);
+  await runLive("ollama", ["pull", model.id]);
   br();
-  ok(`Model ${c.bold}${model.id}${c.reset} ready`);
+  ok(`Model ready`);
 
   // ── Generate API key ──────────────────────────────────────────────────
   const apiKey = randomBytes(32).toString("hex");
   ok("API key generated");
 
-  // ── Clone/update repo ─────────────────────────────────────────────────
+  // ── Clone repo (for proxy server) ─────────────────────────────────────
   if (existsSync(INSTALL_DIR)) {
-    info("Updating existing installation...");
     runQuiet(`git -C "${INSTALL_DIR}" pull`);
   } else {
-    info("Cloning llm-tunnel...");
     runQuiet(`git clone --quiet "${REPO}" "${INSTALL_DIR}"`);
   }
   ok("Repository ready");
 
-  // ── Write .env ────────────────────────────────────────────────────────
-  const envContent = [
-    `API_KEY=${apiKey}`,
-    `MODEL=${model.id}`,
-    `OLLAMA_URL=http://host.docker.internal:11434`,
-    `TUNNEL_TOKEN=unused`,
-    `RATE_LIMIT_RPM=60`,
-  ].join("\n") + "\n";
+  // ── Write config ──────────────────────────────────────────────────────
+  const config = {
+    apiKey,
+    model: model.id,
+    ollamaUrl: "http://localhost:11434",
+    port: 8080,
+    rateLimitRpm: 60,
+  };
+  writeFileSync(join(INSTALL_DIR, "config.json"), JSON.stringify(config, null, 2) + "\n");
+  ok("Config written");
 
-  writeFileSync(join(INSTALL_DIR, ".env"), envContent);
-  ok(".env written");
-
-  // ── Start auth proxy ──────────────────────────────────────────────────
+  // ── Start auth proxy as background process ────────────────────────────
   info("Starting auth proxy...");
-  br();
-  await run("docker", ["compose", "up", "-d", "proxy"], { cwd: INSTALL_DIR });
-  br();
-  ok("Auth proxy running on port 8080");
 
-  // ── Test ───────────────────────────────────────────────────────────────
-  info("Testing connection...");
-  await new Promise((r) => setTimeout(r, 3000));
-  const health = runQuiet("curl -s http://localhost:8080/health");
+  // Kill any existing proxy
+  runQuiet("lsof -ti:8080 | xargs kill -9 2>/dev/null");
+
+  const proxyScript = join(INSTALL_DIR, "proxy", "server.js");
+  const proxyEnv = {
+    ...process.env,
+    API_KEY: apiKey,
+    OLLAMA_URL: "http://localhost:11434",
+    DEFAULT_MODEL: model.id,
+    PORT: "8080",
+    RATE_LIMIT_RPM: "60",
+  };
+
+  const proxy = spawn("node", [proxyScript], {
+    stdio: "ignore",
+    detached: true,
+    env: proxyEnv,
+  });
+  proxy.unref();
+
+  // Write PID for stop command
+  writeFileSync(join(INSTALL_DIR, "proxy.pid"), String(proxy.pid));
+
+  await new Promise((r) => setTimeout(r, 2000));
+  const health = runQuiet("curl -sf http://localhost:8080/health");
   if (health) {
-    ok(`Proxy healthy: ${health}`);
+    ok(`Auth proxy running on port 8080`);
   } else {
-    err("Proxy not responding — check: docker logs llm-tunnel-proxy");
+    err("Proxy failed to start. Run manually: node ~/llm-tunnel/proxy/server.js");
   }
 
   // ── Done ──────────────────────────────────────────────────────────────
@@ -248,7 +221,7 @@ async function main() {
   console.log(`  ${c.green}${c.bold}║              llm-tunnel is running!                       ║${c.reset}`);
   console.log(`  ${c.green}${c.bold}╚═══════════════════════════════════════════════════════════╝${c.reset}`);
   br();
-  console.log(`  ${c.bold}Model:${c.reset}    ${model.id} (native Ollama with GPU acceleration)`);
+  console.log(`  ${c.bold}Model:${c.reset}    ${model.id} (native, GPU accelerated)`);
   console.log(`  ${c.bold}API Key:${c.reset}  ${apiKey}`);
   console.log(`  ${c.bold}Local:${c.reset}    http://localhost:8080`);
   br();
@@ -262,8 +235,8 @@ async function main() {
   console.log(`  ${c.bold}Expose to internet:${c.reset}`);
   console.log(`    cloudflared tunnel --url http://localhost:8080`);
   br();
-  console.log(`  ${c.bold}Stop:${c.reset}     cd ~/llm-tunnel && docker compose down`);
-  console.log(`  ${c.bold}Restart:${c.reset}  cd ~/llm-tunnel && docker compose up -d`);
+  console.log(`  ${c.bold}Stop:${c.reset}     kill $(cat ~/llm-tunnel/proxy.pid)`);
+  console.log(`  ${c.bold}Restart:${c.reset}  node ~/llm-tunnel/proxy/server.js &`);
   br();
   console.log(`  ${c.yellow}Save your API key — you need it for every request.${c.reset}`);
   br();
