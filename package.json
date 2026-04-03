@@ -1,0 +1,15 @@
+{
+  "name": "llm-tunnel",
+  "version": "1.0.0",
+  "description": "Self-hosted LLM server with API key auth and Cloudflare Tunnel",
+  "type": "module",
+  "bin": {
+    "llm-tunnel": "./install.mjs"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ilker-tff/llm-tunnel.git"
+  },
+  "keywords": ["llm", "ollama", "self-hosted", "cloudflare", "tunnel", "gemma", "ai"]
+}

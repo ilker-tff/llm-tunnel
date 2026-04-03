@@ -20,35 +20,22 @@ Ollama (your hardware, your models)
 
 ## Install
 
-Default (Gemma 4 E4B — text, image, video, audio):
-
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ilker-tff/llm-tunnel/main/install.sh | bash
+npx github:ilker-tff/llm-tunnel
 ```
 
-Pick a different model:
-
-```bash
-MODEL=gemma4:31b curl -fsSL https://raw.githubusercontent.com/ilker-tff/llm-tunnel/main/install.sh | bash
-```
-
-With Cloudflare Tunnel:
-
-```bash
-MODEL=gemma4:e4b TUNNEL_TOKEN=your-token curl -fsSL https://raw.githubusercontent.com/ilker-tff/llm-tunnel/main/install.sh | bash
-```
-
-The installer will:
+That's it. The interactive installer will:
 - Check Docker is installed and running
-- Clone the repo and generate a secure API key
-- Auto-detect RAM and set memory limits (50% of total)
+- Let you pick a model with arrow keys (Gemma 4, Qwen, Llama, Mistral)
+- Auto-detect RAM and set memory limits
+- Generate a secure API key
 - Download the model and start all services
 - Print your API key and a ready-to-use test command
 
 ### Prerequisites
 
+- [Node.js](https://nodejs.org) 18+ (for the installer)
 - [Docker Desktop](https://docker.com/products/docker-desktop) (includes Docker Compose)
-- That's it
 
 ## Manual Setup
 
