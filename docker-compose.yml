@@ -12,10 +12,11 @@ services:
         limits:
           memory: ${OLLAMA_MEMORY_LIMIT:-32g}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "cat < /dev/tcp/localhost/11434 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
 
   model-loader:
     image: ollama/ollama:latest
