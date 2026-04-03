@@ -99,6 +99,10 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ error: "Rate limit exceeded", limit: RATE_LIMIT_RPM + "/min" }));
   }
 
+  // ── Log ────────────────────────────────────────────────────────────────────
+  const from = req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  console.log(`${new Date().toISOString()} ${req.method} ${req.url} from=${from}`);
+
   // ── Collect body and passthrough to Ollama ────────────────────────────────
   let body = "";
   req.on("data", (chunk) => (body += chunk));
