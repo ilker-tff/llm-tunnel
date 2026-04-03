@@ -164,8 +164,8 @@ TOTAL_RAM=$(sysctl -n hw.memsize 2>/dev/null || free -b 2>/dev/null | awk '/Mem:
 TOTAL_RAM_GB=$((TOTAL_RAM / 1073741824))
 
 if [ "$TOTAL_RAM_GB" -gt 0 ]; then
-  # Use 75% of total RAM for Ollama
-  MEM_LIMIT="$((TOTAL_RAM_GB * 3 / 4))g"
+  # Use 50% of total RAM for Ollama (leaves plenty for the host)
+  MEM_LIMIT="$((TOTAL_RAM_GB / 2))g"
   info "Detected ${TOTAL_RAM_GB}GB RAM, allocating ${MEM_LIMIT} to Ollama"
 else
   MEM_LIMIT="16g"
