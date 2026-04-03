@@ -184,44 +184,49 @@ const server = http.createServer((req, res) => {
       try {
         const parsed = JSON.parse(body);
         if (!parsed.model) parsed.model = DEFAULT_MODEL;
-        parsed.stream = true; // Always stream to avoid Cloudflare timeout
 
-        // Convert OpenAI fields to Ollama-compatible
-        delete parsed.store;
-        delete parsed.frequency_penalty;
-        delete parsed.presence_penalty;
-        delete parsed.logprobs;
-        delete parsed.top_logprobs;
-        delete parsed.n;
-        delete parsed.response_format;
-        delete parsed.seed;
-        delete parsed.service_tier;
-        delete parsed.user;
-        if (parsed.max_completion_tokens) {
-          parsed.options = parsed.options || {};
-          parsed.options.num_predict = parsed.max_completion_tokens;
-          delete parsed.max_completion_tokens;
-        }
-        if (parsed.max_tokens) {
-          parsed.options = parsed.options || {};
-          parsed.options.num_predict = parsed.max_tokens;
-          delete parsed.max_tokens;
-        }
+        const isOpenAIPath = req.url === "/v1/chat/completions" || req.url === "/chat/completions";
+        if (isOpenAIPath) {
+          // OpenAI clients: force streaming to avoid Cloudflare timeout
+          parsed.stream = true;
 
-        // Convert array content format to string for text-only messages
-        if (parsed.messages) {
-          parsed.messages = parsed.messages.map((msg) => {
-            if (Array.isArray(msg.content)) {
-              const textParts = msg.content.filter((p) => p.type === "text");
-              const imageParts = msg.content.filter((p) => p.type === "image_url");
-              if (imageParts.length === 0) {
-                // Text-only: flatten to string
-                msg.content = textParts.map((p) => p.text).join("\n");
+          // Convert OpenAI fields to Ollama-compatible
+          delete parsed.store;
+          delete parsed.frequency_penalty;
+          delete parsed.presence_penalty;
+          delete parsed.logprobs;
+          delete parsed.top_logprobs;
+          delete parsed.n;
+          delete parsed.response_format;
+          delete parsed.seed;
+          delete parsed.service_tier;
+          delete parsed.user;
+          if (parsed.max_completion_tokens) {
+            parsed.options = parsed.options || {};
+            parsed.options.num_predict = parsed.max_completion_tokens;
+            delete parsed.max_completion_tokens;
+          }
+          if (parsed.max_tokens) {
+            parsed.options = parsed.options || {};
+            parsed.options.num_predict = parsed.max_tokens;
+            delete parsed.max_tokens;
+          }
+
+          // Convert array content format to string for text-only messages
+          if (parsed.messages) {
+            parsed.messages = parsed.messages.map((msg) => {
+              if (Array.isArray(msg.content)) {
+                const textParts = msg.content.filter((p) => p.type === "text");
+                const imageParts = msg.content.filter((p) => p.type === "image_url");
+                if (imageParts.length === 0) {
+                  msg.content = textParts.map((p) => p.text).join("\n");
+                }
               }
-            }
-            return msg;
-          });
+              return msg;
+            });
+          }
         }
+        // Ollama-native paths (/api/chat, /api/generate): passthrough as-is
 
         body = JSON.stringify(parsed);
       } catch {}
@@ -230,11 +235,12 @@ const server = http.createServer((req, res) => {
     // Map OpenAI-compatible paths to Ollama
     let ollamaPath = req.url;
     let isChat = false;
-    if (req.url === "/v1/chat/completions" || req.url === "/chat/completions") { ollamaPath = "/api/chat"; isChat = true; }
-    if (req.url === "/api/chat" || req.url === "/api/generate") { isChat = true; }
+    let isOpenAI = false;
+    if (req.url === "/v1/chat/completions" || req.url === "/chat/completions") { ollamaPath = "/api/chat"; isChat = true; isOpenAI = true; }
+    if (req.url === "/api/chat" || req.url === "/api/generate") { isChat = true; isOpenAI = false; }
     if (req.url === "/v1/models" || req.url === "/models") ollamaPath = "/api/tags";
 
-    proxyToOllama(req, res, ollamaPath, body || undefined, isChat);
+    proxyToOllama(req, res, ollamaPath, body || undefined, isOpenAI);
   });
 });
 
