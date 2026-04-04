@@ -71,7 +71,7 @@ function proxyToOllama(req, res, ollamaPath, body) {
 const server = http.createServer((req, res) => {
   // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key, anthropic-version");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -84,9 +84,10 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ status: "ok", model: DEFAULT_MODEL }));
   }
 
-  // ── Auth ──────────────────────────────────────────────────────────────────
+  // ── Auth (supports both Bearer and x-api-key) ─────────────────────────────
   const authHeader = req.headers.authorization || "";
-  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const xApiKey = req.headers["x-api-key"] || "";
+  const token = xApiKey || authHeader.replace(/^Bearer\s+/i, "").trim();
 
   if (token !== API_KEY) {
     res.writeHead(401, { "Content-Type": "application/json" });
